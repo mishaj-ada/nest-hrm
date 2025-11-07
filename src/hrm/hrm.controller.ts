@@ -1,25 +1,30 @@
-import { Controller, Get } from '@nestjs/common';
-import { LoggerService } from '../shared/logger.service';
-import { DatabaseService } from '../shared/database.service';
+import { Controller, Get, Headers, Post, Body } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('hrm')
 export class HrmController {
-  constructor(
-    private logger: LoggerService,
-    private db: DatabaseService,
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
   @Get('employees')
-  getEmployees() {
-    this.logger.log('HRM', 'Fetching employees');
-    this.db.findAll('employees');
-    return {
-      module: 'HRM',
-      data: [
-        { id: 1, name: 'John Doe', position: 'Developer', salary: 5000 },
-        { id: 2, name: 'Jane Smith', position: 'Manager', salary: 7000 },
-      ],
-    };
+  async getEmployees(@Headers('x-tenant-id') tenantId: string) {
+    return this.prisma.withTenant(parseInt(tenantId), async () => {
+      return this.prisma.employee.findMany();
+    });
+  }
+
+  @Post('employees')
+  async createEmployee(
+    @Headers('x-tenant-id') tenantId: string,
+    @Body() data: any,
+  ) {
+    return this.prisma.withTenant(parseInt(tenantId), async () => {
+      return this.prisma.employee.create({
+        data: {
+          ...data,
+          tenantId: parseInt(tenantId),
+        },
+      });
+    });
   }
 
   @Get('payroll')
