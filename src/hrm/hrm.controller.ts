@@ -1,29 +1,37 @@
-import { Controller, Get, Headers, Post, Body } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Controller, Get, Post, Body, UseInterceptors } from '@nestjs/common';
+import { TenantAwarePrismaService } from '../shared/tenant-aware.service';
+import { TenantInterceptor } from '../shared/tenant.interceptor';
 
 @Controller('hrm')
+@UseInterceptors(TenantInterceptor)
 export class HrmController {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: TenantAwarePrismaService) {}
 
   @Get('employees')
-  async getEmployees(@Headers('x-tenant-id') tenantId: string) {
-    return this.prisma.withTenant(parseInt(tenantId), async () => {
-      return this.prisma.employee.findMany();
-    });
+  async getEmployees() {
+    return this.prisma.employee.findMany();
   }
 
   @Post('employees')
   async createEmployee(
-    @Headers('x-tenant-id') tenantId: string,
-    @Body() data: any,
+    @Body()
+    body: {
+      employeeCode: string;
+      firstName: string;
+      lastName: string;
+      email: string;
+      phone?: string;
+      position: string;
+      salary?: number;
+      hireDate: string;
+      tenantId: number;
+    },
   ) {
-    return this.prisma.withTenant(parseInt(tenantId), async () => {
-      return this.prisma.employee.create({
-        data: {
-          ...data,
-          tenantId: parseInt(tenantId),
-        },
-      });
+    return this.prisma.employee.create({
+      data: {
+        ...body,
+        hireDate: new Date(body.hireDate),
+      },
     });
   }
 

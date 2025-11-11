@@ -1,24 +1,50 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { PrismaClient } from '../../generated/prisma';
+import { Injectable, OnModuleInit, Scope, Inject } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
+import { REQUEST } from '@nestjs/core';
 
-@Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit {
-  async onModuleInit() {
-    await this.$connect();
-  }
+@Injectable({ scope: Scope.REQUEST })
+export class PrismaService implements OnModuleInit {
+  private client: any;
+  private tenantId: number;
 
-  async setTenantContext(tenantId: number) {
-    await this.$executeRawUnsafe(
-      `SET LOCAL app.current_tenant_id = '${tenantId}'`,
-    );
-  }
+  constructor(@Inject(REQUEST) private request: any) {
+    this.tenantId = request.tenantId;
 
-  async withTenant<T>(tenantId: number, callback: () => Promise<T>): Promise<T> {
-    return this.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(
-        `SET LOCAL app.current_tenant_id = '${tenantId}'`,
-      );
-      return callback();
+    const baseClient = new PrismaClient({
+      datasources: {
+        db: {
+          url: process.env.APP_DATABASE_URL || process.env.DATABASE_URL,
+        },
+      },
     });
+
+    this.client = baseClient.$extends({
+      query: {
+        async $allOperations({ operation, model, args, query }) {
+          if (this.tenantId) {
+            await baseClient.$executeRawUnsafe(
+              `SET LOCAL app.current_tenant_id = '${this.tenantId}'`,
+            );
+          }
+          return query(args);
+        },
+      },
+    });
+  }
+
+  async onModuleInit() {
+    // Connection handled by base client
+  }
+
+  get employee() {
+    return this.client.employee;
+  }
+
+  get user() {
+    return this.client.user;
+  }
+
+  get tenant() {
+    return this.client.tenant;
   }
 }
