@@ -1,98 +1,136 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# RLS Workflow - Step by Step
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+## Complete Request Flow
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
-
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ npm install
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. CLIENT REQUEST (Postman/Browser)                            │
+│    GET http://localhost:3000/hrm/employees                      │
+│    Header: x-tenant-id: 1                                       │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. NESTJS CONTROLLER                                            │
+│    @UseInterceptors(TenantInterceptor) ← Intercepts here!      │
+│    HrmController.getEmployees()                                 │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. TENANT INTERCEPTOR                                           │
+│    - Extracts: request.headers['x-tenant-id'] = "1"            │
+│    - Calls: prisma.setTenant(1)                                 │
+│    - Stores tenantId in PrismaService instance                  │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 4. CONTROLLER METHOD EXECUTES                                   │
+│    return this.prisma.employee.findMany()                       │
+│    ↓ No where clause! Just findMany()                          │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 5. PRISMA MIDDLEWARE (Automatic)                                │
+│    - Detects query is about to execute                          │
+│    - Runs: SET LOCAL app.current_tenant_id = '1'               │
+│    - Sets PostgreSQL session variable                           │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 6. PRISMA GENERATES SQL                                         │
+│    SELECT * FROM "Employee"                                     │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 7. POSTGRESQL DATABASE (RLS KICKS IN!)                         │
+│    - Receives: SELECT * FROM "Employee"                         │
+│    - RLS Policy checks: app.current_tenant_id = 1              │
+│    - Automatically adds: WHERE "tenantId" = 1                   │
+│    - Executes: SELECT * FROM "Employee" WHERE "tenantId" = 1   │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 8. DATABASE RETURNS FILTERED RESULTS                            │
+│    [                                                             │
+│      { id: 1, firstName: "John", tenantId: 1 },                │
+│      { id: 2, firstName: "Jane", tenantId: 1 },                │
+│      ... only Tenant 1 employees                                │
+│    ]                                                             │
+└────────────────────────┬────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ 9. RESPONSE TO CLIENT                                           │
+│    Status: 200 OK                                               │
+│    Body: [...tenant 1 employees only...]                        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Compile and run the project
+## Key Components
 
-```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+### TenantInterceptor (Step 3)
+```typescript
+intercept(context: ExecutionContext, next: CallHandler) {
+  const tenantId = request.headers['x-tenant-id'];
+  this.prisma.setTenant(parseInt(tenantId)); // Store tenant ID
+  return next.handle();
+}
 ```
 
-## Run tests
-
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+### PrismaService Middleware (Step 5)
+```typescript
+this.$use(async (params, next) => {
+  if (this.tenantId) {
+    // Set PostgreSQL session variable BEFORE query
+    await this.$executeRawUnsafe(
+      `SET LOCAL app.current_tenant_id = '${this.tenantId}'`
+    );
+  }
+  return next(params);
+});
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+### PostgreSQL RLS Policy (Step 7)
+```sql
+CREATE POLICY tenant_all_policy ON "Employee"
+  FOR ALL
+  USING ("tenantId" = current_setting('app.current_tenant_id')::int)
+  WITH CHECK ("tenantId" = current_setting('app.current_tenant_id')::int);
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## What Happens with Different Tenant IDs?
 
-## Resources
+### Request with x-tenant-id: 1
+```
+Query: SELECT * FROM "Employee"
+RLS adds: WHERE "tenantId" = 1
+Result: Only Tenant 1 employees
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+### Request with x-tenant-id: 2
+```
+Query: SELECT * FROM "Employee"
+RLS adds: WHERE "tenantId" = 2
+Result: Only Tenant 2 employees
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### Request with NO tenant-id header
+```
+Query: SELECT * FROM "Employee"
+RLS: No app.current_tenant_id set
+Result: ERROR or empty (RLS blocks access)
+```
 
-## Support
+## Security Layers
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+1. **Application Layer**: Interceptor extracts tenant ID
+2. **ORM Layer**: Prisma sets session variable
+3. **Database Layer**: PostgreSQL RLS enforces isolation
 
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Even if someone bypasses layers 1-2, layer 3 (database) still protects data! 🔒
